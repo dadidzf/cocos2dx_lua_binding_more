@@ -1,4 +1,4 @@
-﻿#include "scripting/lua-bindings/manual/tolua_fix.h"
+#include "scripting/lua-bindings/manual/tolua_fix.h"
 #include "lua_binding_manual.h"
 #include "network/CCDownloader.h"
 #include "scripting/lua-bindings/manual/LuaBasicConversions.h"
@@ -7,6 +7,11 @@
 
 USING_NS_CC;
 
+static int& lua_dd_Downloader_get_handler()
+{
+    static int s_downloaderHandler = 0;
+    return s_downloaderHandler;
+}
 
 static void lua_dd_Downloader_constructor_setCallBacks(network::Downloader* downloader)
 {
@@ -16,29 +21,49 @@ static void lua_dd_Downloader_constructor_setCallBacks(network::Downloader* down
 		int64_t totalBytesReceived,
 		int64_t totalBytesExpected)
 	{
-		int handler = atoi(task.identifier.c_str());
+        int handler = lua_dd_Downloader_get_handler();
 		if (0 != handler)
 		{
 			LuaStack* stack = LuaEngine::getInstance()->getLuaStack();
+            stack->pushString("onProgress");
+            stack->pushString(task.identifier.c_str());
 			stack->pushLong(bytesReceived);
 			stack->pushLong(totalBytesReceived);
 			stack->pushLong(totalBytesExpected);
-			stack->executeFunctionByHandler(handler, 3);
+			stack->executeFunctionByHandler(handler, 5);
 			stack->clean();
 		}
 	};
+    
+    // define success callback
+    downloader->onDataTaskSuccess = [](const cocos2d::network::DownloadTask& task,
+                                           std::vector<unsigned char>& data)
+    {
+        int handler = lua_dd_Downloader_get_handler();
+		if (0 != handler)
+		{
+            CCLOG("Success to download data");
+			LuaStack* stack = LuaEngine::getInstance()->getLuaStack();
+            stack->pushString("onDataSuccess");
+            stack->pushString(task.identifier.c_str());
+            stack->pushString(std::string(data.begin(), data.end()).c_str(), (int)data.size());
+			stack->executeFunctionByHandler(handler, 3);
+			stack->clean();
+		}
+    };
 
 	downloader->onFileTaskSuccess = [](const cocos2d::network::DownloadTask& task)
 	{
-		CCLOG("Success to download : %s to path(%s)"
+		CCLOG("Success to download file : %s to path(%s)"
 			, task.requestURL.c_str()
 			, task.storagePath.c_str());
-		int handler = atoi(task.identifier.c_str());
+        int handler = lua_dd_Downloader_get_handler();
 		if (0 != handler)
 		{
 			LuaStack* stack = LuaEngine::getInstance()->getLuaStack();
-			stack->pushBoolean(true);
-			stack->executeFunctionByHandler(handler, 1);
+            stack->pushString("onFileSuccess");
+            stack->pushString(task.identifier.c_str());
+			stack->executeFunctionByHandler(handler, 2);
 			stack->clean();
 		}
 	};
@@ -54,21 +79,33 @@ static void lua_dd_Downloader_constructor_setCallBacks(network::Downloader* down
 			, errorCode
 			, errorCodeInternal
 			, errorStr.c_str());
-		int handler = atoi(task.identifier.c_str());
+        int handler = lua_dd_Downloader_get_handler();
 		if (0 != handler)
 		{
 			LuaStack* stack = LuaEngine::getInstance()->getLuaStack();
-			stack->pushBoolean(false);
-			stack->executeFunctionByHandler(handler, 1);
+            stack->pushString("onTaskFailed");
+            stack->pushString(task.identifier.c_str());
+			stack->executeFunctionByHandler(handler, 2);
 			stack->clean();
 		}
 	};
+}
+
+static void lua_dd_Downloader_remove_handler(lua_State* L)
+{
+    int handler = lua_dd_Downloader_get_handler();
+    if (0 != handler)
+    {
+        toluafix_remove_function_by_refid(L, handler);
+    }
 }
 
 static int lua_collect_Downloader (lua_State* L)
 {
     network::Downloader* self = (network::Downloader*) tolua_tousertype(L,1,0);
 	CC_SAFE_DELETE(self);
+    lua_dd_Downloader_remove_handler(L);
+
     return 0;
 }
 
@@ -94,8 +131,63 @@ static int lua_dd_Downloader_constructor(lua_State* L)
 /*
 params:
 	@url
+	@task Id -- string
+*/
+static int lua_dd_Downloader_downloadData(lua_State* L)
+{
+    int argc = 0;
+	network::Downloader* self = nullptr;
+	bool ok = true;
+    
+#if COCOS2D_DEBUG >= 1
+    tolua_Error tolua_err;
+    if (!tolua_isusertype(L,1,"dd.Downloader",0,&tolua_err)) goto tolua_lerror;
+#endif
+    
+    self = (network::Downloader*) tolua_tousertype(L,1,0);
+#if COCOS2D_DEBUG >= 1
+    if (nullptr == self)
+    {
+        tolua_error(L,"invalid 'self' in function 'lua_dd_Downloader_downloadData'\n", nullptr);
+		return 0;
+    }
+#endif
+
+	argc = lua_gettop(L) - 1;
+	if (argc == 2)
+	{
+		std::string arg0;
+		std::string arg1;
+
+		ok &= luaval_to_std_string(L, 2, &arg0, "Downloader:downloadData");
+		ok &= luaval_to_std_string(L, 3, &arg1, "Downloader:downloadData");
+
+		if (!ok)
+		{
+			tolua_error(L, "invalid arguments in function 'lua_dd_Downloader_downloadData'", nullptr);
+			return 0;
+		}
+
+		self->createDownloadDataTask(arg0, arg1);
+
+		return 0;
+	}
+
+    luaL_error(L, "%s has wrong number of arguments: %d, was expecting %d\n", "dd.Downloader.downloadData",argc, 1);
+    return 0;
+    
+#if COCOS2D_DEBUG >= 1
+tolua_lerror:
+    tolua_error(L,"#ferror in function 'lua_dd_Downloader_downloadData'.",&tolua_err);
+    return 0;
+#endif
+}
+
+/*
+params:
+	@url
 	@Absolute FilePath
-	@lua callBack (lua function)
+	@task Id -- string
 */
 static int lua_dd_Downloader_downloadFile(lua_State* L)
 {
@@ -122,9 +214,11 @@ static int lua_dd_Downloader_downloadFile(lua_State* L)
 	{
 		std::string arg0;
 		std::string arg1;
+        std::string arg2;
 
 		ok &= luaval_to_std_string(L, 2, &arg0, "Downloader:downloadFile");
 		ok &= luaval_to_std_string(L, 3, &arg1, "Downloader:downloadFile");
+		ok &= luaval_to_std_string(L, 4, &arg2, "Downloader:downloadFile");
 
 		if (!ok)
 		{
@@ -132,13 +226,7 @@ static int lua_dd_Downloader_downloadFile(lua_State* L)
 			return 0;
 		}
 
-#if COCOS2D_DEBUG >= 1
-		if (!toluafix_isfunction(L, 4, "LUA_FUNCTION", 0, &tolua_err))
-			goto tolua_lerror;
-#endif
-		LUA_FUNCTION handler = toluafix_ref_function(L, 4, 0);
-
-		self->createDownloadFileTask(arg0, arg1, std::to_string(handler));
+		self->createDownloadFileTask(arg0, arg1, arg2);
 
 		return 0;
 	}
@@ -148,13 +236,43 @@ static int lua_dd_Downloader_downloadFile(lua_State* L)
     
 #if COCOS2D_DEBUG >= 1
 tolua_lerror:
-    tolua_error(L,"#ferror in function 'lua_cocos2dx_XMLHttpRequest_send'.",&tolua_err);
+    tolua_error(L,"#ferror in function 'lua_dd_Downloader_downloadFile'.",&tolua_err);
     return 0;
 #endif
 }
 
-static int lua_dd_Downloader_downloadData(lua_State* L)
+static int lua_dd_Downloader_registCallBack(lua_State* L)
 {
+    int argc = 0;
+    
+#if COCOS2D_DEBUG >= 1
+    tolua_Error tolua_err;
+    if (!tolua_isusertable(L, 1, "dd.Downloader", 0, &tolua_err)) goto tolua_lerror;
+#endif
+
+	argc = lua_gettop(L) - 1;
+	if (argc == 1)
+	{
+#if COCOS2D_DEBUG >= 1
+        if (!toluafix_isfunction(L, 2, "LUA_FUNCTION", 0, &tolua_err))
+            goto tolua_lerror;
+#endif
+        
+        lua_dd_Downloader_remove_handler(L);
+        int& handler = lua_dd_Downloader_get_handler();
+        handler = (toluafix_ref_function(L, 2, 0));
+
+		return 0;
+	}
+
+    luaL_error(L, "%s has wrong number of arguments: %d, was expecting %d\n", "dd.Downloader.registCallBack",argc, 1);
+    return 0;
+    
+#if COCOS2D_DEBUG >= 1
+tolua_lerror:
+    tolua_error(L,"#ferror in function 'lua_dd_Downloader_registerCallBack'.",&tolua_err);
+    return 0;
+#endif
 }
 
 static void extendDownloader(lua_State* L)
@@ -164,7 +282,8 @@ static void extendDownloader(lua_State* L)
     tolua_beginmodule(L, "Downloader");
         tolua_function(L, "new", lua_dd_Downloader_constructor);
         tolua_function(L, "downloadFile", lua_dd_Downloader_downloadFile);
-        //tolua_function(L, "downloadData", lua_dd_Downloader_downloadData);
+        tolua_function(L, "downloadData", lua_dd_Downloader_downloadData);
+        tolua_function(L, "registCallBack", lua_dd_Downloader_registCallBack);
 	tolua_endmodule(L);
 }
 

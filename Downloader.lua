@@ -58,12 +58,18 @@ function Downloader.taskCallBack(...)
 	if callBackName == "onProgress" then
 		local progressCallBack = _taskIdMapProgressCallBack[_taskId]
 		if progressCallBack then progressCallBack(args[3], args[4], args[5]) end
-	elseif callBackName == "onFileSuccess" then
-		if resultCallBack then resultCallBack(true) end
-	elseif callBackName == "onDataSuccess"  then
-		if resultCallBack then resultCallBack(true, args[3]) end
-	elseif callBackName == "onTaskFailed" then
-		if resultCallBack then resultCallBack(false) end
+	else
+		if callBackName == "onFileSuccess" then
+			if resultCallBack then resultCallBack(true) end
+		elseif callBackName == "onDataSuccess"  then
+			if resultCallBack then resultCallBack(true, args[3]) end
+		elseif callBackName == "onTaskFailed" then
+			if resultCallBack then resultCallBack(false) end
+		end
+
+		_taskIdMapCallback[taskId] = nil
+		_taskIdMapProgressCallBack[taskId] = nil
+		_taskIdSet[taskId] = nil
 	end
 end
 

@@ -15,7 +15,7 @@ static int& lua_dd_Downloader_get_handler()
 
 static void lua_dd_Downloader_constructor_setCallBacks(network::Downloader* downloader)
 {
-	// define progress callback
+	// define progress callback 
 	downloader->onTaskProgress = [](const network::DownloadTask& task,
 		int64_t bytesReceived,
 		int64_t totalBytesReceived,
